@@ -24,6 +24,7 @@ import com.vividsolutions.jts.geom.Envelope;
 import com.vividsolutions.jts.geom.Geometry;
 import com.vividsolutions.jts.io.WKTReader;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
@@ -56,7 +57,9 @@ public class LayerNodeIndex implements Index<Node>
     public static final String BBOX_QUERY = "bbox";								// Query type
     public static final String INTERSECT_BBOX_QUERY = "intersectBBox";								// Query type
     public static final String CQL_QUERY = "CQL";								// Query type (unused)
-    
+    public static final String ADD_NODE_TO_LAYER = "addNodeToLayer";								// Query type
+    public static final String REMOVE_NODE_FROM_LAYER = "removeNodeFromLayer";								// Query type
+
     public static final String ENVELOPE_PARAMETER = "envelope";					// Query parameter key: envelope for within query
     public static final String DISTANCE_IN_KM_PARAMETER = "distanceInKm";		// Query parameter key: distance for withinDistance query
     public static final String POINT_PARAMETER = "point";						// Query parameter key: relative to this point for withinDistance query
@@ -354,6 +357,69 @@ public class LayerNodeIndex implements Index<Node>
                                         coords.get( 2 ), coords.get( 3 ) ) ) ).toSpatialDatabaseRecordList();
 
 				results = new SpatialRecordHits(res, layer);
+                return results;
+            }
+            catch ( ParseException e )
+            {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        }
+
+        else if ( key.equals( ADD_NODE_TO_LAYER ) )
+        {
+            try
+            {
+                SpatialDatabaseRecord spatialNode;
+
+                @SuppressWarnings("unchecked")
+                Long nodeId = (Long) new JSONParser().parse( (String) params );
+
+                Node existingIndex = idLookup.query("id", nodeId).getSingle();
+
+                if (existingIndex == null)
+                {
+                    Node node = this.db.getNodeById(nodeId);
+
+                    spatialNode = layer.add(node);
+                    idLookup.add(spatialNode.getGeomNode(), "id", nodeId);
+                    layer.getIndex().count();
+                }
+                else
+                {
+                    spatialNode = layer.getIndex().get(nodeId);
+                    layer.update(nodeId, spatialNode.getGeometry());
+                    layer.getIndex().count();
+                }
+
+                List<SpatialDatabaseRecord> res = new ArrayList<SpatialDatabaseRecord>();
+                res.add(spatialNode);
+                results = new SpatialRecordHits(res, layer);
+                return results;
+            }
+            catch ( ParseException e )
+            {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        }
+
+
+        else if ( key.equals( REMOVE_NODE_FROM_LAYER ) )
+        {
+            try
+            {
+                @SuppressWarnings("unchecked")
+                Long nodeId = (Long) new JSONParser().parse( (String) params );
+
+                SpatialDatabaseRecord spatialNode = layer.getIndex().get(nodeId);
+                layer.removeFromIndex( nodeId );
+                idLookup.remove(((SpatialDatabaseRecord) spatialNode).getGeomNode());
+                layer.getIndex().count();
+
+                List<SpatialDatabaseRecord> res = new ArrayList<SpatialDatabaseRecord>();
+                res.add(spatialNode);
+                results = new SpatialRecordHits(res, layer);
                 return results;
             }
             catch ( ParseException e )
