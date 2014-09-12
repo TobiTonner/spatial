@@ -50,8 +50,11 @@ public class LayerNodeIndex implements Index<Node>
     
     public static final String WITHIN_QUERY = "within";							// Query type
     public static final String WITHIN_WKT_GEOMETRY_QUERY = "withinWKTGeometry";	// Query type
+    public static final String INTERSECT_WKT_GEOMETRY_QUERY = "intersectWKTGeometry";	// Query type
     public static final String WITHIN_DISTANCE_QUERY = "withinDistance";		// Query type
+    public static final String INTERSECT_DISTANCE_QUERY = "intersectDistance";		// Query type
     public static final String BBOX_QUERY = "bbox";								// Query type
+    public static final String INTERSECT_BBOX_QUERY = "intersectBBox";								// Query type
     public static final String CQL_QUERY = "CQL";								// Query type (unused)
     
     public static final String ENVELOPE_PARAMETER = "envelope";					// Query parameter key: envelope for within query
@@ -210,12 +213,33 @@ public class LayerNodeIndex implements Index<Node>
             }
 
         }
+
+        else if ( key.equals( INTERSECT_WKT_GEOMETRY_QUERY ) )
+        {
+            WKTReader reader = new WKTReader( layer.getGeometryFactory() );
+            Geometry geometry;
+            try
+            {
+                geometry = reader.read( (String)params);
+                List<SpatialDatabaseRecord> res = GeoPipeline.startIntersectSearch(
+                        layer,geometry ).toSpatialDatabaseRecordList();
+
+                results = new SpatialRecordHits(res, layer);
+                return results;
+            }
+            catch ( com.vividsolutions.jts.io.ParseException e )
+            {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+
+        }
         
         else if ( key.equals( WITHIN_DISTANCE_QUERY ) )
         {
             Double[] point = null;
             Double distance = null;
-            
+
             // this one should enable distance searches using cypher query lang
             // by using: withinDistance:[7.0, 10.0, 100.0]  (long, lat. distance)
             if (params.getClass() == String.class)
@@ -235,7 +259,7 @@ public class LayerNodeIndex implements Index<Node>
                     e.printStackTrace();
                 }
             }
-            
+
             else
             {
                 Map<?, ?> p = (Map<?, ?>) params;
@@ -251,6 +275,48 @@ public class LayerNodeIndex implements Index<Node>
             results = new GeoPipeFlowHits(res, layer);
             return results;
         }
+
+        else if ( key.equals( INTERSECT_DISTANCE_QUERY ) )
+        {
+            Double[] point = null;
+            Double distance = null;
+
+            // this one should enable distance searches using cypher query lang
+            // by using: withinDistance:[7.0, 10.0, 100.0]  (long, lat. distance)
+            if (params.getClass() == String.class)
+            {
+                try
+                {
+                    @SuppressWarnings("unchecked")
+                    List<Double> coordsAndDistance = (List<Double>) new JSONParser().parse( (String) params );
+                    point = new Double[2];
+                    point[0] = coordsAndDistance.get(0);
+                    point[1] = coordsAndDistance.get(1);
+                    distance = coordsAndDistance.get(2);
+                }
+                catch ( ParseException e )
+                {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
+            }
+
+            else
+            {
+                Map<?, ?> p = (Map<?, ?>) params;
+                point = (Double[]) p.get( POINT_PARAMETER );
+                distance = (Double) p.get( DISTANCE_IN_KM_PARAMETER );
+            }
+
+            Coordinate start = new Coordinate(point[1], point[0]);
+            List<GeoPipeFlow> res = GeoPipeline.startNearestNeighborSearch(
+                    layer, start, distance).sort(
+                    "Distance").toList();
+
+            results = new GeoPipeFlowHits(res, layer);
+            return results;
+        }
+
         else if ( key.equals( BBOX_QUERY ) )
         {
             try
@@ -273,6 +339,30 @@ public class LayerNodeIndex implements Index<Node>
                 e.printStackTrace();
             }
         }
+
+        else if ( key.equals( INTERSECT_BBOX_QUERY ) )
+        {
+            try
+            {
+                @SuppressWarnings("unchecked")
+				List<Double> coords = (List<Double>) new JSONParser().parse( (String) params );
+
+                List<SpatialDatabaseRecord> res = GeoPipeline.startIntersectSearch(
+                        layer,
+                        layer.getGeometryFactory().toGeometry(
+                                new Envelope( coords.get( 0 ), coords.get( 1 ),
+                                        coords.get( 2 ), coords.get( 3 ) ) ) ).toSpatialDatabaseRecordList();
+
+				results = new SpatialRecordHits(res, layer);
+                return results;
+            }
+            catch ( ParseException e )
+            {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        }
+
         else
         {
             throw new UnsupportedOperationException( String.format(
