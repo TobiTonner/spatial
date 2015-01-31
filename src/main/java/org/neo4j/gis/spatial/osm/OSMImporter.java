@@ -56,11 +56,13 @@ import org.neo4j.graphdb.Traverser.Order;
 import org.neo4j.graphdb.factory.GraphDatabaseFactory;
 import org.neo4j.graphdb.index.Index;
 import org.neo4j.graphdb.index.IndexHits;
+import org.neo4j.graphdb.mockfs.EphemeralFileSystemAbstraction;
 import org.neo4j.graphdb.traversal.Evaluators;
 import org.neo4j.helpers.collection.MapUtil;
-import org.neo4j.index.lucene.unsafe.batchinsert.LuceneBatchInserterIndexProvider;
-import org.neo4j.kernel.AbstractGraphDatabase;
+import org.neo4j.index.impl.lucene.LuceneBatchInserterIndexProviderNewImpl;
 import org.neo4j.kernel.Traversal;
+import org.neo4j.test.EphemeralFileSystemRule;
+import org.neo4j.test.TestGraphDatabaseFactory;
 import org.neo4j.unsafe.batchinsert.*;
 
 public class OSMImporter implements Constants
@@ -363,7 +365,7 @@ public class OSMImporter implements Constants
 
         public void expandToIncludeBBox( Map<String, Object> nodeProps )
         {
-            double[] sbb = (double[]) nodeProps.get( "bbox" );
+            double[] sbb = (double[]) nodeProps.get( PROP_BBOX );
             bbox.expandToInclude( sbb[0], sbb[2] );
             bbox.expandToInclude( sbb[1], sbb[3] );
             vertices += (Integer) nodeProps.get( "vertices" );
@@ -630,7 +632,7 @@ public class OSMImporter implements Constants
          */
         protected void addOSMBBox( Map<String, Object> bboxProperties )
         {
-            T bbox = addNode( "bbox", bboxProperties, null );
+            T bbox = addNode( PROP_BBOX, bboxProperties, null );
             createRelationship( osm_dataset, bbox, OSMRelation.BBOX );
         }
 
@@ -998,14 +1000,7 @@ public class OSMImporter implements Constants
             if ( checkCount++ > txInterval || tx == null )
             {
                 successTx();
-                if ( relatxedTxFlush )
-                {
-                    tx = ( (AbstractGraphDatabase) graphDb ).tx().unforced().begin();
-                }
-                else
-                {
-                    tx = graphDb.beginTx();
-                }
+                tx = graphDb.beginTx();
             }
         }
 
@@ -1104,7 +1099,7 @@ public class OSMImporter implements Constants
                 Node geomNode = graphDb.createNode();
                 geomNode.setProperty( "gtype", gtype );
                 geomNode.setProperty( "vertices", vertices );
-                geomNode.setProperty( "bbox", new double[] { bbox.getMinX(),
+                geomNode.setProperty( PROP_BBOX, new double[] { bbox.getMinX(),
                         bbox.getMaxX(), bbox.getMinY(), bbox.getMaxY() } );
                 node.createRelationshipTo( geomNode, OSMRelation.GEOM );
                 statsManager.addGeomStats( gtype );
@@ -1381,7 +1376,7 @@ public class OSMImporter implements Constants
         {
             super( statsManager, osmImporter );
             this.batchInserter = batchGraphDb;
-            this.batchIndexService = new LuceneBatchInserterIndexProvider(
+            this.batchIndexService = new LuceneBatchInserterIndexProviderNewImpl(
                     batchGraphDb );
         }
 
@@ -1486,7 +1481,7 @@ public class OSMImporter implements Constants
                 properties.put( "gtype", gtype );
                 properties.put( "vertices", vertices );
                 properties.put(
-                        "bbox",
+                        PROP_BBOX,
                         new double[] { bbox.getMinX(), bbox.getMaxX(),
                                 bbox.getMinY(), bbox.getMaxY() } );
                 long id = batchInserter.createNode( properties );
@@ -1916,7 +1911,7 @@ public class OSMImporter implements Constants
                     }
                     else if ( tagPath.equals( "[osm, bounds]" ) )
                     {
-                        osmWriter.addOSMBBox( extractProperties( "bbox", parser ) );
+                        osmWriter.addOSMBBox( extractProperties( PROP_BBOX, parser ) );
                     }
                     else if ( tagPath.equals( "[osm, node]" ) )
                     {
@@ -2281,15 +2276,15 @@ public class OSMImporter implements Constants
                 switchToBatchInserter();
                 OSMImporter importer = new OSMImporter( layerName );
                 importer.importFile( batchInserter, osmPath );
-                switchToEmbeddedGraphDatabase();
+	        switchToEmbeddedGraphDatabase();
                 importer.reIndex( graphDb, commitInterval );
             }
             else
             {
                 switchToEmbeddedGraphDatabase();
-                OSMImporter importer = new OSMImporter( layerName );
-                importer.importFile( graphDb, osmPath, false, commitInterval, true );
-                importer.reIndex( graphDb, commitInterval );
+	        OSMImporter importer = new OSMImporter( layerName );
+	        importer.importFile( graphDb, osmPath, false, commitInterval, true );
+	        importer.reIndex( graphDb, commitInterval );
             }
             shutdown();
             System.out.println( "=== Completed loading " + layerName + " in "
@@ -2307,7 +2302,8 @@ public class OSMImporter implements Constants
         {
             shutdown();
             batchInserter = BatchInserters.inserter(dbPath.getAbsolutePath());
-            graphDb = new SpatialBatchGraphDatabaseService(batchInserter);
+	    //graphDb = new TestGraphDatabaseFactory().setFileSystem(Default)newImpermanentDatabase( dbPath.getAbsolutePath() );
+	    graphDb = new GraphDatabaseFactory().newEmbeddedDatabase( dbPath.getAbsolutePath() );
         }
 
         protected void shutdown()
