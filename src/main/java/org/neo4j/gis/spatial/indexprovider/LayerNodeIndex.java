@@ -26,6 +26,7 @@ import com.vividsolutions.jts.io.WKTReader;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.HashMap;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 import org.neo4j.gis.spatial.rtree.NullListener;
@@ -38,6 +39,10 @@ import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.index.Index;
 import org.neo4j.graphdb.index.IndexHits;
+import org.neo4j.cypher.javacompat.ExecutionEngine;
+import org.neo4j.cypher.javacompat.ExecutionResult;
+import org.neo4j.graphdb.ResourceIterator;
+import org.neo4j.graphdb.DynamicLabel;
 
 public class LayerNodeIndex implements Index<Node>
 {
@@ -58,6 +63,8 @@ public class LayerNodeIndex implements Index<Node>
     public static final String INTERSECT_BBOX_QUERY = "intersectBBox";								// Query type
     public static final String CQL_QUERY = "CQL";								// Query type (unused)
     public static final String ADD_NODE_TO_LAYER = "addNodeToLayer";								// Query type
+    public static final String ADD_NODE_TO_LAYER_BYFLOWID = "addNodeToLayerByFlowId";								// Query type
+    public static final String CREATE_SPATIAL_INDEX_BY_LABEL = "createSpatialIndexByLabel";								// Query type
     public static final String REMOVE_NODE_FROM_LAYER = "removeNodeFromLayer";								// Query type
 
     public static final String ENVELOPE_PARAMETER = "envelope";					// Query parameter key: envelope for within query
@@ -404,6 +411,136 @@ public class LayerNodeIndex implements Index<Node>
             }
         }
 
+        else if ( key.equals( ADD_NODE_TO_LAYER_BYFLOWID ) )
+        {
+            try
+            {
+                SpatialDatabaseRecord spatialNode;
+
+                @SuppressWarnings("unchecked")
+                List<String> flowIdParams = (List<String>) new JSONParser().parse( (String) params );
+                String dataset = flowIdParams.get(0);
+                String type = flowIdParams.get(1);
+                String flowId = flowIdParams.get(2);
+
+                Map<String, Object> queryParams = new HashMap<String, Object>();
+                queryParams.put("flowid", flowId);
+
+                ExecutionEngine engine = new ExecutionEngine( db );
+
+                String query = "MATCH (node:`flowdb/dataset/" + dataset + "/geometry/" + type + "/instance` {flowid: {flowid}}) RETURN node AS nodeToBeIndexed";
+
+                ExecutionResult result = engine.execute( query, queryParams );
+                Object nodeObjectToBeIndexed = result.columnAs( "nodeToBeIndexed" ).next();
+
+                if ( nodeObjectToBeIndexed instanceof Node )
+                {
+                    Node nodeToBeIndexed = (Node) nodeObjectToBeIndexed;
+                    Long nodeId = nodeToBeIndexed.getId();
+
+                    Node existingIndex = idLookup.query("id", nodeId).getSingle();
+
+                    if (existingIndex == null)
+                    {
+                        Node node = this.db.getNodeById(nodeId);
+
+                        spatialNode = layer.add(node);
+                        idLookup.add(spatialNode.getGeomNode(), "id", nodeId);
+                        layer.getIndex().count();
+                    }
+                    else
+                    {
+                        spatialNode = layer.getIndex().get(nodeId);
+                        layer.update(nodeId, spatialNode.getGeometry());
+                        layer.getIndex().count();
+                    }
+                }
+                else
+                {
+                    throw new RuntimeException( "Could not get spatial node!" );
+                }
+
+                List<SpatialDatabaseRecord> res = new ArrayList<SpatialDatabaseRecord>();
+                res.add(spatialNode);
+                results = new SpatialRecordHits(res, layer);
+                return results;
+            }
+            catch ( ParseException e )
+            {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        }
+
+        else if ( key.equals( CREATE_SPATIAL_INDEX_BY_LABEL ) )
+        {
+
+            try {
+                List<SpatialDatabaseRecord> res = new ArrayList<SpatialDatabaseRecord>();
+                SpatialDatabaseRecord spatialNode;
+                @SuppressWarnings("unchecked")
+                //List<String> flowIdParams = (List<String>) new JSONParser().parse( (String) params );
+                //String rootId = flowIdParams.get(0);
+                //String dataset = flowIdParams.get(1);
+                //String type = flowIdParams.get(2);
+
+                //Map<String, Object> queryParams = new HashMap<String, Object>();
+                //queryParams.put("rootid", rootId);
+
+                //ExecutionEngine engine = new ExecutionEngine( db );
+
+                //String query = "MATCH"
+                //    + "(root:`flowdb` {flowid: {rootid}}),"
+                //    + "(root) -[:`" + dataset + "`]-> (dataset),"
+                //    + "(dataset) -[:`geometry`]-> (geometry),"
+                //    + "(geometry) -[:`" + type + "`]-> (schema),"
+                //    + "(schema) -[:`instance`]-> (node)"
+                //    + "RETURN node AS nodeToBeIndexed";
+
+                //ExecutionResult result = engine.execute( query, queryParams);
+
+                //ResourceIterator<Node> layerNodesIterator = result.columnAs( "nodeToBeIndexed" );
+
+                List<String> paramsList = (List<String>) new JSONParser().parse( (String) params );
+                String label = paramsList.get(0);
+                Integer batchSize = Integer.parseInt(paramsList.get(1));
+                ResourceIterator<Node> layerNodesIterator = db.findNodes(DynamicLabel.label( label ), "indexRequired", true);
+                Integer i = 0;
+
+                try {
+                    while ( layerNodesIterator.hasNext() && i < batchSize)
+                    {
+                        i++;
+                        Node node = layerNodesIterator.next();
+                        long nodeId  = node.getId();
+                        Node existingIndex = idLookup.query("id", nodeId).getSingle();
+
+                        if (existingIndex == null)
+                        {
+                            spatialNode = layer.add(node);
+                            idLookup.add(node, "id", nodeId);
+                        }
+                        else
+                        {
+                            spatialNode = layer.getIndex().get(nodeId);
+                            layer.update(nodeId, spatialNode.getGeometry());
+                        }
+                        node.setProperty("indexRequired", false);
+                        res.add(spatialNode);
+                    }
+                } finally {
+                    layer.getIndex().count();
+                    layerNodesIterator.close();
+                    results = new SpatialRecordHits(res, layer);
+                    return results;
+                }
+            }
+            catch ( ParseException e )
+            {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        }
 
         else if ( key.equals( REMOVE_NODE_FROM_LAYER ) )
         {
